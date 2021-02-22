@@ -1,0 +1,14 @@
+[package]
+name = "MumbleLink"
+version = "0.1.0"
+authors = ["Aamaruvi Yogamani <38222826+Technical27@users.noreply.github.com>"]
+edition = "2018"
+
+[lib]
+crate_type = ["cdylib"]
+
+[dependencies]
+nix = "0.19"
+jni = "0.19"
+lazy_static = "1.4"
+widestring = "0.4"
