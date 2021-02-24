@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+use std::mem;
 use std::ptr::{self, copy_nonoverlapping as memcpy};
 use std::sync::{Arc, Mutex};
 
@@ -8,7 +9,6 @@ use nix::fcntl::OFlag;
 use nix::sys::mman::{self, MapFlags, ProtFlags};
 use nix::sys::stat::Mode;
 use nix::unistd;
-use std::mem;
 
 use jni::errors::Error as JNIError;
 use jni::objects::{JObject, JString};
@@ -58,6 +58,7 @@ struct MumbleLink {
 
 const MUMBLE_LINK_SIZE: usize = mem::size_of::<MumbleLink>();
 
+/// Open the shared memory for the Mumble Link Plugin
 fn init_mumble_link() -> Result<&'static mut MumbleLink, nix::Error> {
     unsafe {
         let uid = unistd::getuid();
@@ -82,12 +83,12 @@ fn init_mumble_link() -> Result<&'static mut MumbleLink, nix::Error> {
 
         unistd::close(raw_fd)?;
 
-        let mumble_link = mem::transmute(ptr);
-
-        Ok(mumble_link)
+        Ok(mem::transmute(ptr))
     }
 }
 
+/// Convert a Mumble Vec Java object to a float slice.
+/// The resultant slice will be in X Z Y from due to a bug in the original DLL.
 fn mumble_vec_to_float_slice(env: JNIEnv, obj: JObject) -> Result<[f32; 3], JNIError> {
     // XXX: Someone messed up the conversion from a MumbleVec object to a float[3] array in the
     // Windows DLL. They did X Z Y instead of X Y Z. I have wasted a huge amount of time on that.
@@ -100,19 +101,23 @@ fn mumble_vec_to_float_slice(env: JNIEnv, obj: JObject) -> Result<[f32; 3], JNIE
     ])
 }
 
-fn get_vec(env: JNIEnv, link_data: JObject, name: &'static str) -> Result<[f32; 3], JNIError> {
+/// Get a float slice from a Java object
+fn get_vec(env: JNIEnv, link_data: JObject, name: &str) -> Result<[f32; 3], JNIError> {
     mumble_vec_to_float_slice(env, env.get_field(link_data, name, MUMBLE_VEC_TYPE)?.l()?)
 }
 
+/// Get a JNIString from a Java object
 fn get_jstring(env: JNIEnv, obj: JObject, name: &str) -> Result<JNIString, JNIError> {
     let jstring = JString::from(env.get_field(obj, name, JSTRING_TYPE)?.l()?);
     Ok(env.get_string(jstring)?.to_owned())
 }
 
+/// Get a WideCString from a Java object
 fn get_widestring(env: JNIEnv, obj: JObject, name: &str) -> Result<WideCString, JNIError> {
     Ok(WideCString::from_str(get_jstring(env, obj, name)?.to_string_lossy()).unwrap())
 }
 
+/// Update the mumble_link with the link_data object
 fn update_mumblelink(
     env: JNIEnv<'static>,
     link_data: JObject,
@@ -181,18 +186,19 @@ pub extern "system" fn Java_com_moonsworth_client_mumble_MumbleLink_init(
     _env: JNIEnv<'static>,
     _this: JObject,
 ) -> jint {
-    let arc = MUMBLE_LINK.clone();
-    let mut mumble_link = arc.lock().unwrap();
-
     match init_mumble_link() {
         Ok(link) => {
+            let arc = MUMBLE_LINK.clone();
+            let mut mumble_link = arc.lock().unwrap();
             *mumble_link = Some(link);
             0
         }
         Err(e) => {
             let errno = e.as_errno().unwrap_or(Errno::UnknownErrno);
-            eprintln!("errno: {}", errno);
-            errno as i32
+            if errno != Errno::ENOENT {
+                eprintln!("Errno: {}", errno);
+            }
+            -1
         }
     }
 }
